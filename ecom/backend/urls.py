@@ -11,5 +11,16 @@ urlpatterns = [
 
     path('product-list/', views.product_list_view, name='product_list'),
     path('product-create/', views.add_product_view, name='add_new_product'),
+    path('', views.home, name='home'),
+    path('products/', views.product_web_list, name='product_web_list'),
+     path('products/<slug:product_slug>/', views.products_details, name='products_details'),
+
+
+     #Authentication
+    path('register/', views.register, name='register'),
+    path('request-otp/', views.request_otp_view, name='request_otp'),
+    path('verify-otp/', views.verify_otp_view, name='verify_otp'),
+    path('login/', views.login_view, name='user_login'),
+    path('logout/', views.logout_view, name='user_logout'),
 
 ]

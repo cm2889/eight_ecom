@@ -1,11 +1,17 @@
+from multiprocessing import context
 from pyexpat.errors import messages
+from urllib import request
 
 from django.shortcuts import get_object_or_404, redirect, render
+from django.contrib.auth import authenticate, login, logout
 
 from django.core.paginator import Paginator,EmptyPage,PageNotAnInteger
 
-from backend.models import ProductMainCategory,Product,ProductSubCategory
+from backend.models import Customer, EmailOTP, OrderCart, ProductMainCategory,Product,ProductSubCategory
 
+from django.contrib.auth.models import User
+
+from backend.utls import generate_otp
 # Create your views here.
 
 
@@ -145,3 +151,125 @@ def add_product_view(request):
           'sub_categories': sub_categories
      }
      return render(request, 'product/add_product.html', context)
+
+
+
+#Home View
+
+def home(request):
+     main_categories= ProductMainCategory.objects.filter(is_active=True)
+
+     featured_products= Product.objects.filter(is_active=True,is_featured=True).order_by('-created_at')[:10]
+
+     context = {
+        'main_categories': main_categories,
+        'featured_products': featured_products,
+        
+    }
+     
+     return render(request, 'website/home.html', context)
+
+def product_web_list(request):
+
+     products= Product.objects.filter(is_active=True).order_by('-created_at')
+
+     context = {
+          'products': products
+     }
+     return render(request, 'website/product/list.html', context)
+
+
+def products_details(request, product_slug):
+
+    product = Product.objects.filter(product_slug=product_slug, is_active=True).first()
+  
+    context = {
+        'product': product,
+    }
+    return render(request, 'website/product/products_details.html', context)
+
+def register(request):
+
+     if request.method == 'POST':
+          username = request.POST['username']
+          email = request.POST['email']
+          phone = request.POST['phone']
+          dob = request.POST['date_of_birth']
+          password = request.POST['password']
+          
+          if User.objects.filter(username=username).exists():
+               return render(request, 'website/user/register.html', {'error': 'Username already exists.'})
+          
+          user= User.objects.create_user(username=username, email=email, password=password)
+          Customer.objects.create(user=user, phone=phone, date_of_birth=dob)
+
+          generate_otp(email)
+
+          return redirect(f'/backend/verify-otp/?email={email}')
+          
+
+     return render(request, 'website/user/register.html')
+
+
+def request_otp_view(request):
+    if request.method == 'POST':
+        email = request.POST.get('email')
+        generate_otp(email)
+        return redirect(f'/backend/verify-otp/?email={email}')
+
+def verify_otp_view(request):
+    email = request.GET.get('email')
+
+    if request.method == 'POST':
+        otp = request.POST.get('otp')  # email theke otp nibo 
+
+        #OTP ache kina database e check korbo, and 
+        otp_obj = EmailOTP.objects.filter(email=email, code=otp).order_by('-created_at').first()
+
+       # OTP database e pele and OTP expired na hoye thakle, user ke active kore dibo, and login page e niye jabo. OTP na pele or OTP expired hoye gele error message dekhabo.
+        if otp_obj and not otp_obj.is_expired():
+            user = User.objects.filter(email=email).first()  # select * from auth_user where email=email limit 1
+            if not user:
+                messages.error(request, "User not found. Please register first.")
+                return redirect('register')
+            customer = Customer.objects.filter(user=user).first()
+            if customer:
+                customer.is_active = True
+                customer.save()
+                messages.success(request, "OTP verified successfully. You can now log in.")
+            else:
+                messages.error(request, "Customer not found. Please contact support.")
+            
+            return redirect('home')
+        else:
+            messages.error(request, "Invalid or expired OTP.")
+
+    return render(request, 'website/user/verify_otp.html', {'email': email})    
+
+
+def login_view(request):
+
+     if request.method == 'POST':
+          phone = request.POST.get('phone')
+          password = request.POST.get('password')
+
+          profile = Customer.objects.get(phone=phone)
+
+          user=authenticate(request, username=profile.user.username, password=password)
+
+          if user:
+               login(request, user)
+               messages.success(request, "Logged in successfully.")
+          next_url = request.GET.get('next')
+          if next_url:
+               next_url = next_url.strip()
+          else:
+               next_url = "home"
+          return redirect(next_url)
+
+     return render(request, 'website/user/login.html')
+
+def logout_view(request):
+     logout(request)
+     messages.success(request, "Logged out successfully.")
+     return redirect('home')

@@ -138,3 +138,16 @@ STATICFILES_DIRS = [
 
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 MEDIA_URL = '/media/'
+
+
+#Email settings
+
+# Email configuration
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = 'smtp.office365.com'
+EMAIL_PORT = 587
+EMAIL_HOST_USER = 'no-reply@plat-forms.com'
+EMAIL_HOST_PASSWORD = 'sncmgcmzjkzgxaaaa7lqn'
+EMAIL_USE_TLS = True
+EMAIL_USE_SSL = False
+DEFAULT_FROM_EMAIL = "Plat-Forms <no-reply@plat-forms.com>"
