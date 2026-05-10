@@ -2,16 +2,20 @@ from multiprocessing import context
 from pyexpat.errors import messages
 from urllib import request
 
+from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.contrib.auth import authenticate, login, logout
 
 from django.core.paginator import Paginator,EmptyPage,PageNotAnInteger
 
-from backend.models import Customer, EmailOTP, OrderCart, ProductMainCategory,Product,ProductSubCategory
+from backend.models import Customer, EmailOTP, Order, OrderCart, OrderDetail, ProductMainCategory,Product,ProductSubCategory
 
 from django.contrib.auth.models import User
 
 from backend.utls import generate_otp
+from django.db import transaction
+
+from .views_payment import create_payment_request
 # Create your views here.
 
 
@@ -236,7 +240,7 @@ def verify_otp_view(request):
             if customer:
                 customer.is_active = True
                 customer.save()
-                messages.success(request, "OTP verified successfully. You can now log in.")
+               # messages.success(request, "OTP verified successfully. You can now log in.")
             else:
                 messages.error(request, "Customer not found. Please contact support.")
             
@@ -259,7 +263,7 @@ def login_view(request):
 
           if user:
                login(request, user)
-               messages.success(request, "Logged in successfully.")
+               #messages.success(request, "Logged in successfully.")
           next_url = request.GET.get('next')
           if next_url:
                next_url = next_url.strip()
@@ -273,3 +277,153 @@ def logout_view(request):
      logout(request)
      messages.success(request, "Logged out successfully.")
      return redirect('home')
+
+def cart_amount_summary(request):
+
+    sub_total_amount = 0
+    total_vat = 0
+    total_discount = 0
+    grand_total = 0
+
+    if request.user.is_authenticated:
+        customer= Customer.objects.filter(user=request.user).first()
+        cart_items = OrderCart.objects.filter(customer=customer, is_active=True, is_order=False)
+        for item in cart_items:
+            sub_total_amount += item.total_amount
+            #total_vat += (item.product.price * 0.15)
+    grand_total = (sub_total_amount + total_vat) - total_discount 
+
+    return {'sub_total_amount': sub_total_amount, 'total_vat': total_vat, 'total_discount': total_discount, 'grand_total': grand_total}
+
+def cart(request):
+     customer= Customer.objects.filter(user=request.user).first()
+
+     context ={
+          'customer': customer,
+     }
+
+     return render(request, 'website/cart/cart.html', context)
+
+def add_or_update_cart(request):
+
+    
+    is_authenticated = request.user.is_authenticated
+    
+    
+    if is_authenticated:
+        if request.method == 'POST':
+            
+            customer=Customer.objects.filter(user=request.user).first()
+            
+            product_id = request.POST.get('product_id')
+            quantity = int(request.POST.get('quantity', 0))
+
+            try:
+                isRemoved = False
+
+                cart_item, created = OrderCart.objects.update_or_create(
+                    customer=customer, product_id=product_id, is_order=False, is_active=True,
+                    defaults={'quantity': quantity}
+                )
+                
+                if not created:
+                    if quantity <= 0:
+                        cart_item.is_active = False
+                        isRemoved = True
+
+                    cart_item.quantity = quantity
+                    cart_item.save()
+
+                amount_summary = cart_amount_summary(request)
+
+                cart_item_count = OrderCart.objects.filter(customer=customer, is_order=False, is_active=True).count()
+                print(f"Cart Item Count: {cart_item_count}")
+
+               
+
+                response = {
+                    'status': 'success',
+                    'message': 'Cart updated successfully',
+                    'is_authenticated': is_authenticated,
+                    'isRemoved': isRemoved,
+                    'item_price': cart_item.total_amount,
+                    'cart_item_count': cart_item_count,
+                    'amount_summary': amount_summary,
+                }
+                
+                return JsonResponse(response)
+            
+
+            except OrderCart.DoesNotExist:
+                return JsonResponse({'status': 'error', 'message': 'Cart item not found', 'is_authenticated': is_authenticated,})
+
+    return JsonResponse({'status': 'error', 'message': 'Invalid request', 'is_authenticated': is_authenticated,}, status=400)
+
+def checkout(request):
+
+    amount_summary= cart_amount_summary(request)
+    grand_total = amount_summary.get('grand_total', 0)
+
+    if grand_total < 1:
+        messages.error(request, "Your cart is empty. Please add items to cart before checkout.")
+        return redirect('cart')
+    
+    if request.method == 'POST':
+        with transaction.atomic():
+            billing_address = request.POST.get('billing_address')
+
+            print(f"Billing Address: {billing_address}")
+            print("testtststs")
+            customer= Customer.objects.filter(user=request.user).first()
+
+            if not billing_address:
+                messages.error(request, "Billing address is required.")
+
+                print("Checkout failed: Missing billing address.")
+                return redirect('checkout')
+            
+            cart_items = OrderCart.objects.filter(customer=customer, is_active=True, is_order=False)
+
+            if len(cart_items) == 0:
+                messages.error(request, "Your cart is empty. Please add items to cart before checkout.")
+                return redirect('cart')
+            else:
+                order_obj= Order.objects.create(
+                    customer=customer,
+                    billing_address=billing_address,
+                    
+                )
+                
+                order_amount, shipping_charge, discount, coupon_discount, vat_amount, tax_amount = 0, 0, 0, 0, 0, 0
+
+                for cart_item in cart_items:
+                    order_amount += cart_item.total_amount
+
+                    OrderDetail.objects.create(
+                        order=order_obj,
+                        product=cart_item.product,
+                        quantity=cart_item.quantity,
+                        unit_price=cart_item.product.price,
+                        total_price=cart_item.total_amount
+                    )
+
+                    grand_total = (order_amount + shipping_charge + vat_amount + tax_amount) - (discount + coupon_discount)
+
+                order_obj.order_amount = order_amount
+                order_obj.shipping_charge = shipping_charge
+                order_obj.discount = discount
+                order_obj.coupon_discount = coupon_discount
+                order_obj.vat_amount = vat_amount
+                order_obj.tax_amount = tax_amount
+                order_obj.due_amount = grand_total
+                order_obj.grand_total = grand_total
+                order_obj.save()
+
+                messages.success(request, "Your order has been placed successfully.")
+
+                #print(f"Order Amount: {order_amount}, Shipping Charge: {shipping_charge}, Discount: {discount}, Coupon Discount: {coupon_discount}, VAT Amount: {vat_amount}, Tax Amount: {tax_amount}, Grand Total: {grand_total}")
+                response_data, response_status = create_payment_request(request, order_obj.id)
+                print(response_data)
+                print(response_status)
+
+                

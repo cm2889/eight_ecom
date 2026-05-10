@@ -23,4 +23,10 @@ urlpatterns = [
     path('login/', views.login_view, name='user_login'),
     path('logout/', views.logout_view, name='user_logout'),
 
+    #ajax
+    path('add-or-update-cart/', views.add_or_update_cart, name='add_or_update_cart'),
+
+    path('cart/', views.cart, name='cart'),
+    path('checkout/', views.checkout, name='checkout'),
+
 ]
